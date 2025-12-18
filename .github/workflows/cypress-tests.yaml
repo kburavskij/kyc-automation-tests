@@ -61,7 +61,7 @@ jobs:
         run: |
           npm start &
           echo $! > server.pid &
-          npx wait-on http://localhost:300 -t 120000
+          npx wait-on http://localhost:3000 -t 120000
         env:
           PORT: 3000
 
