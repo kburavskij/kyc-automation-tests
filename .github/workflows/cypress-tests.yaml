@@ -73,16 +73,11 @@ jobs:
           PORT: 3001
           REACT_APP_API_URL: http://localhost:3000/api
 
-      - name: Wait for server to be ready
+      - name: Wait for server and client to be ready
         run: |
           echo "Waiting for server..."
-          npx wait-on http://localhost:3000/api/health -t 60000 || npx wait-on http://localhost:3000 -t 60000
+          npx wait-on tcp:3000 tcp:3001 --timeout 180000
         continue-on-error: true
-
-      - name: Wait for client to be ready
-        run: |
-          echo "Waiting for client..."
-          npx wait-on http://localhost:3001 -t 120000
 
       - name: Run Cypress tests
         uses: cypress-io/github-action@v6
