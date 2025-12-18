@@ -60,8 +60,7 @@ jobs:
         working-directory: kyc-mock-app/server
         run: |
           npm start &
-          echo $! > server.pid &
-          npx wait-on http://localhost:3000 -t 120000
+          echo $! > server.pid
         env:
           PORT: 3000
 
@@ -69,8 +68,7 @@ jobs:
         working-directory: kyc-mock-app/client
         run: |
           npm start &
-          echo $! > client.pid &
-          npx wait-on http://localhost:3001 -t 120000
+          echo $! > client.pid
         env:
           PORT: 3001
           REACT_APP_API_URL: http://localhost:3000/api
