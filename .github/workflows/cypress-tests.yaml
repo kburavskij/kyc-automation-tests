@@ -61,7 +61,7 @@ jobs:
         run: |
           npm start &
           echo $! > server.pid &
-          npx wait-on http://localhost:3000 -t 120000
+          npx wait-on http://127.0.0.1:3000 -t 120000
         env:
           PORT: 3000
 
@@ -70,7 +70,7 @@ jobs:
         run: |
           npm start &
           echo $! > client.pid &
-          npx wait-on http://localhost:3001 -t 120000
+          npx wait-on http://127.0.0.1:3001 -t 120000
         env:
           PORT: 3001
           REACT_APP_API_URL: http://localhost:3000/api
