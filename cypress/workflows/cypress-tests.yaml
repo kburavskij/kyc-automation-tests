@@ -1,0 +1,230 @@
+name: Cypress E2E Tests
+
+on:
+  push:
+    branches: [ main, develop, master ]
+  pull_request:
+    branches: [ main, develop, master ]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Test environment'
+        required: true
+        default: 'local'
+        type: choice
+        options:
+          - local
+          - sandbox
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox, edge]
+
+    steps:
+      - name: Checkout test repository
+        uses: actions/checkout@v4
+
+      - name: Checkout KYC mock application
+        uses: actions/checkout@v4
+        with:
+          repository: vialeteu/kyc-mock-app
+          path: kyc-mock-app
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install test dependencies
+        run: npm ci
+
+      - name: Install server dependencies
+        working-directory: kyc-mock-app/server
+        run: npm install
+
+      - name: Install client dependencies
+        working-directory: kyc-mock-app/client
+        run: npm install
+
+      - name: Start server in background
+        working-directory: kyc-mock-app/server
+        run: |
+          npm start &
+          echo $! > server.pid
+        env:
+          PORT: 3000
+
+      - name: Start client in background
+        working-directory: kyc-mock-app/client
+        run: |
+          npm start &
+          echo $! > client.pid
+        env:
+          PORT: 3001
+          REACT_APP_API_URL: http://localhost:3000/api
+
+      - name: Wait for server to be ready
+        run: |
+          echo "Waiting for server..."
+          npx wait-on http://localhost:3000/api/health -t 60000 || npx wait-on http://localhost:3000 -t 60000
+        continue-on-error: true
+
+      - name: Wait for client to be ready
+        run: |
+          echo "Waiting for client..."
+          npx wait-on http://localhost:3001 -t 120000
+
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v6
+        with:
+          browser: ${{ matrix.browser }}
+          config-file: cypress.config.js
+          install: false
+        env:
+          CYPRESS_baseUrl: http://localhost:3001
+          CYPRESS_TEST_ENV: local
+          CYPRESS_MOCK_KYC: true
+
+      - name: Stop servers
+        if: always()
+        run: |
+          if [ -f kyc-mock-app/server/server.pid ]; then
+            kill $(cat kyc-mock-app/server/server.pid) || true
+          fi
+          if [ -f kyc-mock-app/client/client.pid ]; then
+            kill $(cat kyc-mock-app/client/client.pid) || true
+          fi
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots-${{ matrix.browser }}-${{ github.run_number }}
+          path: cypress/screenshots
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos-${{ matrix.browser }}-${{ github.run_number }}
+          path: cypress/videos
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.browser }}-${{ github.run_number }}
+          path: |
+            cypress/results
+            cypress/reports
+          retention-days: 30
+          if-no-files-found: ignore
+
+  api-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout test repository
+        uses: actions/checkout@v4
+
+      - name: Checkout KYC mock application
+        uses: actions/checkout@v4
+        with:
+          repository: vialeteu/kyc-mock-app
+          path: kyc-mock-app
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install test dependencies
+        run: npm ci
+
+      - name: Install server dependencies
+        working-directory: kyc-mock-app/server
+        run: npm install
+
+      - name: Install client dependencies
+        working-directory: kyc-mock-app/client
+        run: npm install
+
+      - name: Start server
+        working-directory: kyc-mock-app/server
+        run: |
+          npm start &
+          echo $! > server.pid
+
+      - name: Start client
+        working-directory: kyc-mock-app/client
+        run: |
+          npm start &
+          echo $! > client.pid
+
+      - name: Wait for services
+        run: |
+          npx wait-on http://localhost:3000 -t 60000 || true
+          npx wait-on http://localhost:3001 -t 120000
+
+      - name: Run API tests only
+        run: npm run test:api || npx cypress run --spec 'cypress/e2e/api.cy.js' --browser chrome --headless
+        env:
+          CYPRESS_baseUrl: http://localhost:3001
+          CYPRESS_TEST_ENV: local
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f kyc-mock-app/server/server.pid ]; then
+            kill $(cat kyc-mock-app/server/server.pid) || true
+          fi
+          if [ -f kyc-mock-app/client/client.pid ]; then
+            kill $(cat kyc-mock-app/client/client.pid) || true
+          fi
+
+  report:
+    runs-on: ubuntu-latest
+    needs: [test, api-tests]
+    if: always()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create test summary
+        run: |
+          echo "# Cypress Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts Available" >> $GITHUB_STEP_SUMMARY
+          echo "- Screenshots (if failures occurred)" >> $GITHUB_STEP_SUMMARY
+          echo "- Videos of test execution" >> $GITHUB_STEP_SUMMARY
+          echo "- Detailed test results" >> $GITHUB_STEP_SUMMARY
